@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple QR Price Scanner</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    padding: 20px;
+    text-align: center;
+    background: #f9f9f9;
+    color: #222;
+  }
+  button, input {
+    font-size: 24px;
+    margin: 10px 0;
+    padding: 12px 20px;
+    border-radius: 8px;
+    border: 1px solid #aaa;
+  }
+  button {
+    cursor: pointer;
+    background: #2a9d8f;
+    color: white;
+    border: none;
+  }
+  button:hover {
+    background: #23867a;
+  }
+  input[type=number] {
+    width: 150px;
+  }
+  #reader {
+    margin: 10px auto;
+    max-width: 320px;
+  }
+  #resultArea {
+    font-size: 28px;
+    margin-top: 20px;
+    min-height: 130px;
+  }
+  #actions {
+    margin-top: 20px;
+  }
+  #exportBtn, #importBtn {
+    background: #264653;
+  }
+  #exportBtn:hover, #importBtn:hover {
+    background: #1f3b45;
+  }
+  #importFile {
+    display: none;
+  }
+</style>
+<script src="https://unpkg.com/html5-qrcode" ></script>
+</head>
+<body>
+
+<h1>Simple QR Price Scanner</h1>
+
+<button id="scanBtn">Scan Product</button>
+
+<div id="reader" style="display:none;"></div>
+
+<div id="resultArea"></div>
+
+<div id="actions">
+  <button id="exportBtn">Export Data (JSON)</button>
+  <button id="importBtn">Import Data (JSON)</button>
+  <input type="file" id="importFile" accept=".json" />
+</div>
+
+<script>
+(() => {
+  // Local storage key
+  const STORAGE_KEY = "productData";
+
+  // Load saved data or empty object
+  function loadData() {
+    try {
+      const json = localStorage.getItem(STORAGE_KEY);
+      return json ? JSON.parse(json) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  // Save data object back to localStorage
+  function saveData(data) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  }
+
+  let productData = loadData();
+
+  const scanBtn = document.getElementById("scanBtn");
+  const readerDiv = document.getElementById("reader");
+  const resultArea = document.getElementById("resultArea");
+  const exportBtn = document.getElementById("exportBtn");
+  const importBtn = document.getElementById("importBtn");
+  const importFile = document.getElementById("importFile");
+
+  let html5QrCode;
+  let scanning = false;
+
+  // Clear result area
+  function clearResult() {
+    resultArea.innerHTML = "";
+  }
+
+  // Show prices with edit button
+  function showProduct(code, product) {
+    resultArea.innerHTML = `
+      <div><strong>Product Code:</strong> ${code}</div>
+      <div>Cost Price: <span id="costVal">${product.cost}</span> MAD</div>
+      <div>Selling Price: <span id="sellVal">${product.sell}</span> MAD</div>
+      <button id="editBtn">Edit Prices</button>
+    `;
+
+    document.getElementById("editBtn").onclick = () => {
+      showEditForm(code, product);
+    };
+  }
+
+  // Show form to add new product or edit existing
+  function showEditForm(code, existing = { cost: "", sell: "" }) {
+    resultArea.innerHTML = `
+      <div><strong>Product Code:</strong> ${code}</div>
+      <div>
+        <label>Cost Price (MAD): <br />
+          <input id="costInput" type="number" min="0" step="0.01" value="${existing.cost}" />
+        </label>
+      </div>
+      <div>
+        <label>Selling Price (MAD): <br />
+          <input id="sellInput" type="number" min="0" step="0.01" value="${existing.sell}" />
+        </label>
+      </div>
+      <button id="saveBtn">Save</button>
+      <button id="cancelBtn">Cancel</button>
+    `;
+
+    document.getElementById("saveBtn").onclick = () => {
+      const cost = parseFloat(document.getElementById("costInput").value);
+      const sell = parseFloat(document.getElementById("sellInput").value);
+      if (isNaN(cost) || isNaN(sell)) {
+        alert("Please enter valid numbers for cost and selling price.");
+        return;
+      }
+      productData[code] = {
+        cost,
+        sell,
+        lastModified: Date.now()
+      };
+      saveData(productData);
+      showProduct(code, productData[code]);
+    };
+
+    document.getElementById("cancelBtn").onclick = () => {
+      if (productData[code]) {
+        showProduct(code, productData[code]);
+      } else {
+        clearResult();
+      }
+    };
+  }
+
+  // Start scanning
+  async function startScan() {
+    if (scanning) return; // Prevent double start
+    scanning = true;
+    scanBtn.disabled = true;
+    clearResult();
+    readerDiv.style.display = "block";
+
+    html5QrCode = new Html5Qrcode("reader");
+    try {
+      await html5QrCode.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: 250 },
+        (decodedText) => {
+          html5QrCode.stop();
+          scanning = false;
+          readerDiv.style.display = "none";
+          scanBtn.disabled = false;
+
+          const code = decodedText.trim();
+          if (productData[code]) {
+            showProduct(code, productData[code]);
+          } else {
+            showEditForm(code);
+          }
+        },
+        (errorMessage) => {
+          // ignore scan errors or no QR found
+        }
+      );
+    } catch (e) {
+      alert("Camera initialization failed or permission denied.");
+      scanning = false;
+      readerDiv.style.display = "none";
+      scanBtn.disabled = false;
+    }
+  }
+
+  scanBtn.onclick = startScan;
+
+  // Export JSON file
+  exportBtn.onclick = () => {
+    const dataStr = JSON.stringify(productData, null, 2);
+    const blob = new Blob([dataStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `product-data-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 0);
+  };
+
+  // Import JSON file
+  importBtn.onclick = () => {
+    importFile.value = "";
+    importFile.click();
+  };
+
+  importFile.onchange = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const importedData = JSON.parse(e.target.result);
+        let importedCount = 0, updatedCount = 0;
+
+        // Merge logic: Add new or update if newer
+        for (const [code, item] of Object.entries(importedData)) {
+          if (
+            !productData[code] ||
+            (item.lastModified && item.lastModified > (productData[code].lastModified || 0))
+          ) {
+            productData[code] = item;
+            importedCount++;
+          } else {
+            updatedCount++;
+          }
+        }
+        saveData(productData);
+        alert(`Import done: ${importedCount} new/updated products.`);
+        clearResult();
+      } catch {
+        alert("Invalid JSON file.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+})();
+</script>
+
+</body>
+</html>
